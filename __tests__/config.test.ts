@@ -1,38 +1,8 @@
 import {expect, test, beforeEach} from '@jest/globals'
 import {readConfig} from '../src/config'
 import {getRefs} from '../src/git-refs'
-import * as Utils from '../src/utils'
-
-// GitHub Action inputs come in the form of environment variables
-// with an INPUT prefix (e.g. INPUT_FAIL-ON-SEVERITY)
-function setInput(input: string, value: string) {
-  process.env[`INPUT_${input.toUpperCase()}`] = value
-}
-
-// We want a clean ENV before each test. We use `delete`
-// since we want `undefined` values and not empty strings.
-function clearInputs() {
-  const allowedOptions = [
-    'FAIL-ON-SEVERITY',
-    'FAIL-ON-SCOPES',
-    'ALLOW-LICENSES',
-    'DENY-LICENSES',
-    'ALLOW-GHSAS',
-    'LICENSE-CHECK',
-    'VULNERABILITY-CHECK',
-    'CONFIG-FILE',
-    'BASE-REF',
-    'HEAD-REF'
-  ]
-
-  allowedOptions.forEach(option => {
-    delete process.env[`INPUT_${option.toUpperCase()}`]
-  })
-}
-
-beforeAll(() => {
-  jest.spyOn(Utils, 'isSPDXValid').mockReturnValue(true)
-})
+import * as spdx from '../src/spdx'
+import {setInput, clearInputs} from './test-helpers'
 
 beforeEach(() => {
   clearInputs()
@@ -45,11 +15,16 @@ test('it defaults to low severity', async () => {
 
 test('it reads custom configs', async () => {
   setInput('fail-on-severity', 'critical')
-  setInput('allow-licenses', ' BSD, GPL 2')
+  setInput('allow-licenses', 'ISC, GPL-2.0')
 
   const config = await readConfig()
   expect(config.fail_on_severity).toEqual('critical')
-  expect(config.allow_licenses).toEqual(['BSD', 'GPL 2'])
+  expect(config.allow_licenses).toEqual(['ISC', 'GPL-2.0'])
+})
+
+test('it defaults to false for warn-only', async () => {
+  const config = await readConfig()
+  expect(config.warn_only).toEqual(false)
 })
 
 test('it defaults to empty allow/deny lists ', async () => {
@@ -61,7 +36,7 @@ test('it defaults to empty allow/deny lists ', async () => {
 
 test('it raises an error if both an allow and denylist are specified', async () => {
   setInput('allow-licenses', 'MIT')
-  setInput('deny-licenses', 'BSD')
+  setInput('deny-licenses', 'BSD-3-Clause')
 
   await expect(readConfig()).rejects.toThrow(
     'You cannot specify both allow-licenses and deny-licenses'
@@ -72,6 +47,52 @@ test('it raises an error if an empty allow list is specified', async () => {
 
   await expect(readConfig()).rejects.toThrow(
     'You should provide at least one license in allow-licenses'
+  )
+})
+
+test('it successfully parses allow-dependencies-licenses', async () => {
+  setInput(
+    'allow-dependencies-licenses',
+    'pkg:npm/@test/package@1.2.3,pkg:npm/example'
+  )
+  const config = await readConfig()
+  expect(config.allow_dependencies_licenses).toEqual([
+    'pkg:npm/@test/package@1.2.3',
+    'pkg:npm/example'
+  ])
+})
+
+test('it raises an error when an invalid package-url is used for allow-dependencies-licenses', async () => {
+  setInput('allow-dependencies-licenses', 'not-a-purl')
+  await expect(readConfig()).rejects.toThrow(`Error parsing package-url`)
+})
+
+test('it raises an error when a nameless package-url is used for allow-dependencies-licenses', async () => {
+  setInput('allow-dependencies-licenses', 'pkg:npm/@namespace/')
+  await expect(readConfig()).rejects.toThrow(
+    `Error parsing package-url: name is required`
+  )
+})
+
+test('it raises an error when an invalid package-url is used for deny-packages', async () => {
+  setInput('deny-packages', 'not-a-purl')
+
+  await expect(readConfig()).rejects.toThrow(`Error parsing package-url`)
+})
+
+test('it raises an error when a nameless package-url is used for deny-packages', async () => {
+  setInput('deny-packages', 'pkg:npm/@namespace/')
+
+  await expect(readConfig()).rejects.toThrow(
+    `Error parsing package-url: name is required`
+  )
+})
+
+test('it raises an error when an argument to deny-groups is missing a namespace', async () => {
+  setInput('deny-groups', 'pkg:npm/my-fun-org')
+
+  await expect(readConfig()).rejects.toThrow(
+    `package-url must have a namespace`
   )
 })
 
@@ -103,58 +124,76 @@ test('it raises an error when no refs are provided and the event is not a pull r
   ).toThrow()
 })
 
-test('it reads an external config file', async () => {
-  setInput('config-file', './__tests__/fixtures/config-allow-sample.yml')
+const pullRequestLikeEvents = ['pull_request', 'pull_request_target']
 
-  const config = await readConfig()
-  expect(config.fail_on_severity).toEqual('critical')
-  expect(config.allow_licenses).toEqual(['BSD', 'GPL 2'])
-})
+test.each(pullRequestLikeEvents)(
+  'it uses the given refs even when the event is %s',
+  async eventName => {
+    setInput('base-ref', 'a-custom-base-ref')
+    setInput('head-ref', 'a-custom-head-ref')
 
-test('raises an error when the the config file was not found', async () => {
-  setInput('config-file', 'fixtures/i-dont-exist')
-  await expect(readConfig()).rejects.toThrow(/Unable to fetch/)
-})
+    const refs = getRefs(await readConfig(), {
+      payload: {
+        pull_request: {
+          number: 42,
+          base: {sha: 'pr-base-ref'},
+          head: {sha: 'pr-head-ref'}
+        }
+      },
+      eventName
+    })
+    expect(refs.base).toEqual('a-custom-base-ref')
+    expect(refs.head).toEqual('a-custom-head-ref')
+  }
+)
 
-test('it parses options from both sources', async () => {
-  setInput('config-file', './__tests__/fixtures/config-allow-sample.yml')
+test.each(pullRequestLikeEvents)(
+  'it uses the event refs when the event is %s and no refs are provided in config',
+  async eventName => {
+    const refs = getRefs(await readConfig(), {
+      payload: {
+        pull_request: {
+          number: 42,
+          base: {sha: 'pr-base-ref'},
+          head: {sha: 'pr-head-ref'}
+        }
+      },
+      eventName
+    })
+    expect(refs.base).toEqual('pr-base-ref')
+    expect(refs.head).toEqual('pr-head-ref')
+  }
+)
 
-  let config = await readConfig()
-  expect(config.fail_on_severity).toEqual('critical')
-
+test('it uses the given refs even when the event is merge_group', async () => {
   setInput('base-ref', 'a-custom-base-ref')
-  config = await readConfig()
-  expect(config.base_ref).toEqual('a-custom-base-ref')
+  setInput('head-ref', 'a-custom-head-ref')
+
+  const refs = getRefs(await readConfig(), {
+    payload: {
+      merge_group: {
+        base_sha: 'pr-base-ref',
+        head_sha: 'pr-head-ref'
+      }
+    },
+    eventName: 'merge_group'
+  })
+  expect(refs.base).toEqual('a-custom-base-ref')
+  expect(refs.head).toEqual('a-custom-head-ref')
 })
 
-test('in case of conflicts, the inline config is the source of truth', async () => {
-  setInput('fail-on-severity', 'low')
-  setInput('config-file', './__tests__/fixtures/config-allow-sample.yml') // this will set fail-on-severity to 'critical'
-
-  const config = await readConfig()
-  expect(config.fail_on_severity).toEqual('low')
-})
-
-test('it uses the default values when loading external files', async () => {
-  setInput('config-file', './__tests__/fixtures/no-licenses-config.yml')
-  let config = await readConfig()
-  expect(config.allow_licenses).toEqual(undefined)
-  expect(config.deny_licenses).toEqual(undefined)
-
-  setInput('config-file', './__tests__/fixtures/license-config-sample.yml')
-  config = await readConfig()
-  expect(config.fail_on_severity).toEqual('low')
-})
-
-test('it accepts an external configuration filename', async () => {
-  setInput('config-file', './__tests__/fixtures/no-licenses-config.yml')
-  const config = await readConfig()
-  expect(config.fail_on_severity).toEqual('critical')
-})
-
-test('it raises an error when given an unknown severity in an external config file', async () => {
-  setInput('config-file', './__tests__/fixtures/invalid-severity-config.yml')
-  await expect(readConfig()).rejects.toThrow()
+test('it uses the event refs when the event is merge_group and no refs are provided in config', async () => {
+  const refs = getRefs(await readConfig(), {
+    payload: {
+      merge_group: {
+        base_sha: 'pr-base-ref',
+        head_sha: 'pr-head-ref'
+      }
+    },
+    eventName: 'merge_group'
+  })
+  expect(refs.base).toEqual('pr-base-ref')
+  expect(refs.head).toEqual('pr-head-ref')
 })
 
 test('it defaults to runtime scope', async () => {
@@ -232,32 +271,44 @@ test('it is not possible to disable both checks', async () => {
   )
 })
 
-test('it supports comma-separated lists', async () => {
-  setInput(
-    'config-file',
-    './__tests__/fixtures/inline-license-config-sample.yml'
-  )
-  let config = await readConfig()
-
-  expect(config.allow_licenses).toEqual(['MIT', 'GPL-2.0-only'])
-})
-
 describe('licenses that are not valid SPDX licenses', () => {
-  beforeAll(() => {
-    jest.spyOn(Utils, 'isSPDXValid').mockReturnValue(false)
-  })
-
   test('it raises an error for invalid licenses in allow-licenses', async () => {
-    setInput('allow-licenses', ' BSD, GPL 2')
+    setInput('allow-licenses', ' BSD-YOLO, GPL-2.0')
     await expect(readConfig()).rejects.toThrow(
-      'Invalid license(s) in allow-licenses: BSD,GPL 2'
+      'Invalid license(s) in allow-licenses: BSD-YOLO'
     )
   })
 
   test('it raises an error for invalid licenses in deny-licenses', async () => {
-    setInput('deny-licenses', ' BSD, GPL 2')
+    setInput('deny-licenses', ' GPL-2.0, BSD-YOLO, Apache-2.0, ToIll')
     await expect(readConfig()).rejects.toThrow(
-      'Invalid license(s) in deny-licenses: BSD,GPL 2'
+      'Invalid license(s) in deny-licenses: BSD-YOLO, ToIll'
     )
   })
+})
+
+test('it parses the comment-summary-in-pr input', async () => {
+  setInput('comment-summary-in-pr', 'true')
+  let config = await readConfig()
+  expect(config.comment_summary_in_pr).toBe('always')
+
+  clearInputs()
+  setInput('comment-summary-in-pr', 'false')
+  config = await readConfig()
+  expect(config.comment_summary_in_pr).toBe('never')
+
+  clearInputs()
+  setInput('comment-summary-in-pr', 'always')
+  config = await readConfig()
+  expect(config.comment_summary_in_pr).toBe('always')
+
+  clearInputs()
+  setInput('comment-summary-in-pr', 'never')
+  config = await readConfig()
+  expect(config.comment_summary_in_pr).toBe('never')
+
+  clearInputs()
+  setInput('comment-summary-in-pr', 'on-failure')
+  config = await readConfig()
+  expect(config.comment_summary_in_pr).toBe('on-failure')
 })

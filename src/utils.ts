@@ -1,6 +1,5 @@
 import * as core from '@actions/core'
 import {Octokit} from 'octokit'
-import spdxParse from 'spdx-expression-parse'
 import {Changes} from './schemas'
 
 export function groupDependenciesByManifest(
@@ -8,7 +7,9 @@ export function groupDependenciesByManifest(
 ): Map<string, Changes> {
   const dependencies: Map<string, Changes> = new Map()
   for (const change of changes) {
-    const manifestName = change.manifest
+    // If the manifest is null or empty, give it a name now to avoid
+    // breaking the HTML rendering later
+    const manifestName = change.manifest || 'Unnamed Manifest'
 
     if (dependencies.get(manifestName) === undefined) {
       dependencies.set(manifestName, [])
@@ -29,15 +30,6 @@ export function renderUrl(url: string | null, text: string): string {
     return `<a href="${url}">${text}</a>`
   } else {
     return text
-  }
-}
-
-export function isSPDXValid(license: string): boolean {
-  try {
-    spdxParse(license)
-    return true
-  } catch (_) {
-    return false
   }
 }
 

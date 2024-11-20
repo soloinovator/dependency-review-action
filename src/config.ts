@@ -4,7 +4,8 @@ import YAML from 'yaml'
 import * as core from '@actions/core'
 import * as z from 'zod'
 import {ConfigurationOptions, ConfigurationOptionsSchema} from './schemas'
-import {isSPDXValid, octokitClient} from './utils'
+import {octokitClient} from './utils'
+import {isValid} from './spdx'
 
 type ConfigurationOptionsPartial = Partial<ConfigurationOptions>
 
@@ -29,11 +30,28 @@ function readInlineConfig(): ConfigurationOptionsPartial {
   const fail_on_scopes = parseList(getOptionalInput('fail-on-scopes'))
   const allow_licenses = parseList(getOptionalInput('allow-licenses'))
   const deny_licenses = parseList(getOptionalInput('deny-licenses'))
+  const allow_dependencies_licenses = parseList(
+    getOptionalInput('allow-dependencies-licenses')
+  )
+  const deny_packages = parseList(getOptionalInput('deny-packages'))
+  const deny_groups = parseList(getOptionalInput('deny-groups'))
   const allow_ghsas = parseList(getOptionalInput('allow-ghsas'))
   const license_check = getOptionalBoolean('license-check')
   const vulnerability_check = getOptionalBoolean('vulnerability-check')
   const base_ref = getOptionalInput('base-ref')
   const head_ref = getOptionalInput('head-ref')
+  const comment_summary_in_pr = getOptionalInput('comment-summary-in-pr')
+  const retry_on_snapshot_warnings = getOptionalBoolean(
+    'retry-on-snapshot-warnings'
+  )
+  const retry_on_snapshot_warnings_timeout = getOptionalNumber(
+    'retry-on-snapshot-warnings-timeout'
+  )
+  const warn_only = getOptionalBoolean('warn-only')
+  const show_openssf_scorecard = getOptionalBoolean('show-openssf-scorecard')
+  const warn_on_openssf_scorecard_level = getOptionalNumber(
+    'warn-on-openssf-scorecard-level'
+  )
 
   validateLicenses('allow-licenses', allow_licenses)
   validateLicenses('deny-licenses', deny_licenses)
@@ -43,16 +61,31 @@ function readInlineConfig(): ConfigurationOptionsPartial {
     fail_on_scopes,
     allow_licenses,
     deny_licenses,
+    deny_packages,
+    deny_groups,
+    allow_dependencies_licenses,
     allow_ghsas,
     license_check,
     vulnerability_check,
     base_ref,
-    head_ref
+    head_ref,
+    comment_summary_in_pr,
+    retry_on_snapshot_warnings,
+    retry_on_snapshot_warnings_timeout,
+    warn_only,
+    show_openssf_scorecard,
+    warn_on_openssf_scorecard_level
   }
 
   return Object.fromEntries(
     Object.entries(keys).filter(([_, value]) => value !== undefined)
   )
+}
+
+function getOptionalNumber(name: string): number | undefined {
+  const value = core.getInput(name)
+  const parsed = z.string().regex(/^\d+$/).transform(Number).safeParse(value)
+  return parsed.success ? parsed.data : undefined
 }
 
 function getOptionalBoolean(name: string): boolean | undefined {
@@ -81,10 +114,12 @@ function validateLicenses(
     return
   }
 
-  const invalid_licenses = licenses.filter(license => !isSPDXValid(license))
+  const invalid_licenses = licenses.filter(license => !isValid(license))
 
   if (invalid_licenses.length > 0) {
-    throw new Error(`Invalid license(s) in ${key}: ${invalid_licenses}`)
+    throw new Error(
+      `Invalid license(s) in ${key}: ${invalid_licenses.join(', ')}`
+    )
   }
 }
 
@@ -128,7 +163,10 @@ function parseConfigFile(configData: string): ConfigurationOptionsPartial {
       'allow-licenses',
       'deny-licenses',
       'fail-on-scopes',
-      'allow-ghsas'
+      'allow-ghsas',
+      'allow-dependencies-licenses',
+      'deny-packages',
+      'deny-groups'
     ]
 
     for (const key of Object.keys(data)) {
