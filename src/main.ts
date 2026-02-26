@@ -186,8 +186,11 @@ async function run(): Promise<void> {
     )
 
     // generate informational scorecard entries for all added changes in the PR
-    const scorecardChanges = getScorecardChanges(changes)
-    const scorecard = await getScorecardLevels(scorecardChanges)
+    let scorecard: Scorecard = {dependencies: []}
+    if (config.show_openssf_scorecard) {
+      const scorecardChanges = getScorecardChanges(changes)
+      scorecard = await getScorecardLevels(scorecardChanges)
+    }
 
     const minSummary = summary.addSummaryToSummary(
       vulnerableChanges,
