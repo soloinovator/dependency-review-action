@@ -279,7 +279,7 @@ async function promisePool(
 export async function addChangeVulnerabilitiesToSummary(
   vulnerableChanges: Changes,
   severity: string,
-  showPatchedVersions: boolean = false
+  showPatchedVersions = false
 ): Promise<void> {
   if (vulnerableChanges.length === 0) {
     return
