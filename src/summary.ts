@@ -6,7 +6,8 @@ import {
   groupDependenciesByManifest,
   getManifestsSet,
   renderUrl,
-  octokitClient
+  octokitClient,
+  isEnterprise
 } from './utils'
 import * as semver from 'semver'
 
@@ -277,7 +278,8 @@ async function promisePool(
 
 export async function addChangeVulnerabilitiesToSummary(
   vulnerableChanges: Changes,
-  severity: string
+  severity: string,
+  showPatchedVersions: boolean = false
 ): Promise<void> {
   if (vulnerableChanges.length === 0) {
     return
@@ -287,9 +289,18 @@ export async function addChangeVulnerabilitiesToSummary(
 
   // Build set of unique advisories to query
   const advisorySet = new Set<string>()
-  for (const pkg of vulnerableChanges) {
-    for (const vuln of pkg.vulnerabilities) {
-      advisorySet.add(vuln.advisory_ghsa_id)
+  if (showPatchedVersions) {
+    if (isEnterprise()) {
+      core.warning(
+        'show-patched-versions is not supported on GitHub Enterprise Server. The Patched Version column will be omitted.'
+      )
+      showPatchedVersions = false
+    } else {
+      for (const pkg of vulnerableChanges) {
+        for (const vuln of pkg.vulnerabilities) {
+          advisorySet.add(vuln.advisory_ghsa_id)
+        }
+      }
     }
   }
 
@@ -434,33 +445,42 @@ export async function addChangeVulnerabilitiesToSummary(
         }
 
         if (!sameAsPrevious) {
-          rows.push([
+          const row: SummaryTableRow = [
             renderUrl(change.source_repository_url, change.name),
             change.version,
             renderUrl(vuln.advisory_url, vuln.advisory_summary),
-            vuln.severity,
-            patchVer
-          ])
+            vuln.severity
+          ]
+          if (showPatchedVersions) {
+            row.push(patchVer)
+          }
+          rows.push(row)
         } else {
-          rows.push([
+          const row: SummaryTableRow = [
             {data: '', colspan: '2'},
             renderUrl(vuln.advisory_url, vuln.advisory_summary),
-            vuln.severity,
-            patchVer
-          ])
+            vuln.severity
+          ]
+          if (showPatchedVersions) {
+            row.push(patchVer)
+          }
+          rows.push(row)
         }
         previous_package = change.name
         previous_version = change.version
       }
     }
+    const headerRow: SummaryTableRow = [
+      {data: 'Name', header: true},
+      {data: 'Version', header: true},
+      {data: 'Vulnerability', header: true},
+      {data: 'Severity', header: true}
+    ]
+    if (showPatchedVersions) {
+      headerRow.push({data: 'Patched Version', header: true})
+    }
     core.summary.addHeading(`<em>${manifest}</em>`, 4).addTable([
-      [
-        {data: 'Name', header: true},
-        {data: 'Version', header: true},
-        {data: 'Vulnerability', header: true},
-        {data: 'Severity', header: true},
-        {data: 'Patched Version', header: true}
-      ],
+      headerRow,
       ...rows
     ])
   }

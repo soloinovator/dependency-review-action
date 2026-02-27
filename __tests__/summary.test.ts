@@ -47,7 +47,8 @@ const defaultConfig: ConfigurationOptions = {
   retry_on_snapshot_warnings_timeout: 120,
   warn_only: false,
   warn_on_openssf_scorecard_level: 3,
-  show_openssf_scorecard: false
+  show_openssf_scorecard: false,
+  show_patched_versions: false
 }
 
 const changesWithEmptyManifests: Changes = [
@@ -407,13 +408,68 @@ test('addChangeVulnerabilitiesToSummary() - does not print severity statement if
   expect(text).not.toContain('Only included vulnerabilities')
 })
 
-test('addChangeVulnerabilitiesToSummary() - includes patched version column', async () => {
+test('addChangeVulnerabilitiesToSummary() - does not include patched version column by default', async () => {
   const changes = [createTestChange()]
 
   await summary.addChangeVulnerabilitiesToSummary(changes, 'low')
 
   const text = core.summary.stringify()
+  expect(text).not.toContain('Patched Version')
+})
+
+test('addChangeVulnerabilitiesToSummary() - includes patched version column when enabled', async () => {
+  const changes = [createTestChange()]
+
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low', true)
+
+  const text = core.summary.stringify()
   expect(text).toContain('Patched Version')
+})
+
+test('addChangeVulnerabilitiesToSummary() - skips patched version on GHES even when enabled', async () => {
+  const originalUrl = process.env.GITHUB_SERVER_URL
+  process.env.GITHUB_SERVER_URL = 'https://ghes.example.com'
+  const warnSpy = jest.spyOn(core, 'warning')
+
+  const changes = [createTestChange()]
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low', true)
+
+  const text = core.summary.stringify()
+  expect(text).not.toContain('Patched Version')
+  expect(warnSpy).toHaveBeenCalledWith(
+    'show-patched-versions is not supported on GitHub Enterprise Server. The Patched Version column will be omitted.'
+  )
+  expect(mockOctokitRequest).not.toHaveBeenCalled()
+
+  process.env.GITHUB_SERVER_URL = originalUrl
+})
+
+test('addChangeVulnerabilitiesToSummary() - works normally on GHES when patched versions disabled', async () => {
+  const originalUrl = process.env.GITHUB_SERVER_URL
+  process.env.GITHUB_SERVER_URL = 'https://ghes.example.com'
+
+  const changes = [createTestChange()]
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low', false)
+
+  const text = core.summary.stringify()
+  expect(text).not.toContain('Patched Version')
+  expect(mockOctokitRequest).not.toHaveBeenCalled()
+
+  process.env.GITHUB_SERVER_URL = originalUrl
+})
+
+test('addChangeVulnerabilitiesToSummary() - works normally on GHES with default (no third arg)', async () => {
+  const originalUrl = process.env.GITHUB_SERVER_URL
+  process.env.GITHUB_SERVER_URL = 'https://ghes.example.com'
+
+  const changes = [createTestChange()]
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low')
+
+  const text = core.summary.stringify()
+  expect(text).not.toContain('Patched Version')
+  expect(mockOctokitRequest).not.toHaveBeenCalled()
+
+  process.env.GITHUB_SERVER_URL = originalUrl
 })
 
 test('addLicensesToSummary() - does not include entire section if no license issues found', () => {
@@ -584,7 +640,7 @@ test('addChangeVulnerabilitiesToSummary() - handles multiple version ranges for 
   })
 
   const changes = [pkg8, pkg9]
-  await summary.addChangeVulnerabilitiesToSummary(changes, 'low')
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low', true)
 
   const text = core.summary.stringify()
 
@@ -628,7 +684,7 @@ test('addChangeVulnerabilitiesToSummary() - handles RestSharp GHSA-4rr6-2v9v-wcp
   })
 
   const changes = [pkg]
-  await summary.addChangeVulnerabilitiesToSummary(changes, 'low')
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low', true)
 
   const text = core.summary.stringify()
 
@@ -672,7 +728,7 @@ test('addChangeVulnerabilitiesToSummary() - handles version coercion for non-str
   })
 
   const changes = [pkg]
-  await summary.addChangeVulnerabilitiesToSummary(changes, 'low')
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low', true)
 
   const text = core.summary.stringify()
 
@@ -714,7 +770,7 @@ test('addChangeVulnerabilitiesToSummary() - handles invalid versions in fail-ope
   })
 
   const changes = [pkg]
-  await summary.addChangeVulnerabilitiesToSummary(changes, 'low')
+  await summary.addChangeVulnerabilitiesToSummary(changes, 'low', true)
 
   const text = core.summary.stringify()
 
@@ -765,7 +821,7 @@ test('addChangeVulnerabilitiesToSummary() - respects concurrency limit for API c
     }
   })
 
-  await summary.addChangeVulnerabilitiesToSummary(packages, 'low')
+  await summary.addChangeVulnerabilitiesToSummary(packages, 'low', true)
 
   // Verify that concurrency limit (10) was respected
   expect(maxConcurrent).toBeLessThanOrEqual(10)
@@ -814,7 +870,7 @@ test('addChangeVulnerabilitiesToSummary() - completes all tasks even with varyin
     }
   )
 
-  await summary.addChangeVulnerabilitiesToSummary(packages, 'low')
+  await summary.addChangeVulnerabilitiesToSummary(packages, 'low', true)
 
   // Verify all 20 unique advisories were fetched and completed
   expect(completedAdvisories.size).toBe(20)

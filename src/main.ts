@@ -207,7 +207,8 @@ async function run(): Promise<void> {
       core.setOutput('vulnerable-changes', JSON.stringify(vulnerableChanges))
       await summary.addChangeVulnerabilitiesToSummary(
         vulnerableChanges,
-        minSeverity
+        minSeverity,
+        config.show_patched_versions
       )
       issueFound ||= await printVulnerabilitiesBlock(
         vulnerableChanges,
