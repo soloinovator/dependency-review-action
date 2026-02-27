@@ -479,10 +479,9 @@ export async function addChangeVulnerabilitiesToSummary(
     if (showPatchedVersions) {
       headerRow.push({data: 'Patched Version', header: true})
     }
-    core.summary.addHeading(`<em>${manifest}</em>`, 4).addTable([
-      headerRow,
-      ...rows
-    ])
+    core.summary
+      .addHeading(`<em>${manifest}</em>`, 4)
+      .addTable([headerRow, ...rows])
   }
 
   if (severity !== 'low') {
