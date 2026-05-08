@@ -22,7 +22,7 @@
 ## Overview
 
 The dependency review action scans your pull requests for dependency changes, and will raise an error if any vulnerabilities or invalid licenses are being introduced.
-The action is supported by an [API endpoint](https://docs.github.com/en/rest/dependency-graph/dependency-review?apiVersion=2022-11-28) that diffs the dependencies between any two revisions on your default branch.
+The action is supported by an [API endpoint](https://docs.github.com/en/rest/dependency-graph/dependency-review?apiVersion=2026-03-10) that diffs the dependencies between any two revisions on your default branch.
 
 The action is available for:
 
@@ -53,6 +53,8 @@ When the action runs, you can see the results on:
 #### Installation (standard)
 
 You can install the action on any public repository, or any organization-owned private repository, provided the organization has a GitHub Advanced Security license.
+
+> Note: Dependency Review Action v5.0.0 updates the runtime to node24. This requires a minimum Actions Runner version [v2.327.1](https://github.com/actions/runner/releases/tag/v2.327.1) to run.
 
 1. Add a new YAML workflow to your `.github/workflows` folder:
 
